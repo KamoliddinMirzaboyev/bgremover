@@ -95,3 +95,39 @@ input[type='color']::-webkit-color-swatch {
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
+
+/* Processing scan beam — moves top → bottom on image */
+@keyframes proc-scan-y {
+  0% {
+    top: -15%;
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  90% {
+    opacity: 1;
+  }
+  100% {
+    top: 92%;
+    opacity: 0;
+  }
+}
+
+.proc-scan {
+  animation: proc-scan-y 2.6s ease-in-out infinite;
+}
+
+@keyframes proc-corner-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.proc-corner {
+  animation: proc-corner-pulse 2s ease-in-out infinite;
+}
