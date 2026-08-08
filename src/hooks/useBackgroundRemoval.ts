@@ -1,7 +1,8 @@
-import { useCallback, useRef, useState } from 'react'
-import { removeBackground } from '@imgly/background-removal'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { preload, removeBackground } from '@imgly/background-removal'
 import type { Config } from '@imgly/background-removal'
 import { progressLabel } from '../lib/canvas'
+import { refineCutout } from '../lib/refineMatte'
 import type { ProcessProgress } from '../types'
 
 interface Result {
@@ -10,11 +11,31 @@ interface Result {
   fileName: string
 }
 
+function supportsWebGpu(): boolean {
+  return typeof navigator !== 'undefined' && 'gpu' in navigator
+}
+
+function baseConfig(onProgress?: Config['progress']): Config {
+  return {
+    // Full-quality weights when available path; fp16 is default balance.
+    // Post-refine fixes residual halo regardless of model.
+    model: 'isnet_fp16',
+    device: supportsWebGpu() ? 'gpu' : 'cpu',
+    proxyToWorker: true,
+    output: {
+      format: 'image/png',
+      quality: 1,
+    },
+    progress: onProgress,
+  }
+}
+
 export function useBackgroundRemoval() {
   const [progress, setProgress] = useState<ProcessProgress | null>(null)
   const [error, setError] = useState<string | null>(null)
   const abortRef = useRef(false)
   const urlsRef = useRef<string[]>([])
+  const busyRef = useRef(false)
 
   const trackUrl = (url: string) => {
     urlsRef.current.push(url)
@@ -28,7 +49,24 @@ export function useBackgroundRemoval() {
     urlsRef.current = []
   }, [])
 
+  // Warm model on idle so first cutout is faster
+  useEffect(() => {
+    const run = () => {
+      void preload(baseConfig()).catch(() => {
+        /* ignore preload errors — process will retry */
+      })
+    }
+    if (typeof requestIdleCallback !== 'undefined') {
+      const id = requestIdleCallback(run, { timeout: 2500 })
+      return () => cancelIdleCallback(id)
+    }
+    const t = window.setTimeout(run, 400)
+    return () => window.clearTimeout(t)
+  }, [])
+
   const processFile = useCallback(async (file: File): Promise<Result | null> => {
+    if (busyRef.current) return null
+    busyRef.current = true
     abortRef.current = false
     setError(null)
     setProgress({
@@ -42,24 +80,17 @@ export function useBackgroundRemoval() {
     const originalUrl = trackUrl(URL.createObjectURL(file))
 
     try {
-      const config: Config = {
-        model: 'isnet_fp16',
-        output: {
-          format: 'image/png',
-          quality: 1,
-        },
-        progress: (key, current, total) => {
-          if (abortRef.current) return
-          const percent = total > 0 ? Math.min(99, Math.round((current / total) * 100)) : 0
-          setProgress({
-            key,
-            current,
-            total,
-            percent,
-            label: progressLabel(key),
-          })
-        },
-      }
+      const config = baseConfig((key, current, total) => {
+        if (abortRef.current) return
+        const percent = total > 0 ? Math.min(92, Math.round((current / total) * 100)) : 0
+        setProgress({
+          key,
+          current,
+          total,
+          percent,
+          label: progressLabel(key),
+        })
+      })
 
       setProgress((p) =>
         p
@@ -67,10 +98,27 @@ export function useBackgroundRemoval() {
           : null,
       )
 
-      const blob = await removeBackground(file, config)
+      const rawBlob = await removeBackground(file, config)
 
       if (abortRef.current) {
         URL.revokeObjectURL(originalUrl)
+        urlsRef.current = urlsRef.current.filter((u) => u !== originalUrl)
+        return null
+      }
+
+      setProgress({
+        key: 'refine',
+        current: 1,
+        total: 1,
+        percent: 96,
+        label: 'Chetlarni tozalanmoqda...',
+      })
+
+      const blob = await refineCutout(rawBlob, file)
+
+      if (abortRef.current) {
+        URL.revokeObjectURL(originalUrl)
+        urlsRef.current = urlsRef.current.filter((u) => u !== originalUrl)
         return null
       }
 
@@ -92,6 +140,7 @@ export function useBackgroundRemoval() {
       }
     } catch (e) {
       URL.revokeObjectURL(originalUrl)
+      urlsRef.current = urlsRef.current.filter((u) => u !== originalUrl)
       const message =
         e instanceof Error
           ? e.message.includes('memory') || e.message.includes('Memory')
@@ -101,6 +150,8 @@ export function useBackgroundRemoval() {
       setError(message)
       setProgress(null)
       return null
+    } finally {
+      busyRef.current = false
     }
   }, [])
 
@@ -131,6 +182,7 @@ export function useBackgroundRemoval() {
 
   const reset = useCallback(() => {
     abortRef.current = true
+    busyRef.current = false
     revokeAll()
     setProgress(null)
     setError(null)

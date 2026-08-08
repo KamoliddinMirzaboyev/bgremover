@@ -95,5 +95,8 @@ export function progressLabel(key: string): string {
   if (k.includes('compute') || k.includes('inference') || k.includes('process')) {
     return 'Subyekt aniqlanmoqda...'
   }
+  if (k.includes('refine') || k.includes('matte') || k.includes('post')) {
+    return 'Chetlarni tozalanmoqda...'
+  }
   return 'Fon olib tashlanmoqda...'
 }
