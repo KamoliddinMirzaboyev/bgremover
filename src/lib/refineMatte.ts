@@ -1,5 +1,7 @@
 /**
- * Fast cutout post-process with main-thread yields (no long freezes).
+ * Cutout post-process:
+ * 1) Refine AI alpha at inference resolution
+ * 2) Upscale mask + apply onto full-res original RGB (sharp export)
  */
 
 import { yieldToMain } from './progress'
@@ -52,7 +54,6 @@ function detectEdgeMode(data: Uint8ClampedArray, n: number): 'hard' | 'soft' {
   return mid / kept < 0.14 ? 'hard' : 'soft'
 }
 
-/** Process rows in chunks and yield so UI stays responsive */
 async function mapRows(
   h: number,
   chunk: number,
@@ -118,39 +119,96 @@ async function refineAlphaFast(
   return a0
 }
 
-async function loadRgbMatching(
-  originalBlob: Blob,
+/** Smooth upscale of single-channel alpha via canvas */
+async function upscaleAlpha(
+  alpha: Uint8ClampedArray,
+  sw: number,
+  sh: number,
+  dw: number,
+  dh: number,
+): Promise<Uint8ClampedArray> {
+  if (sw === dw && sh === dh) return alpha
+
+  const small = document.createElement('canvas')
+  small.width = sw
+  small.height = sh
+  const sctx = small.getContext('2d')
+  if (!sctx) throw new Error('Canvas qo‘llab-quvvatlanmaydi')
+
+  const img = sctx.createImageData(sw, sh)
+  const d = img.data
+  for (let i = 0; i < alpha.length; i++) {
+    const p = i * 4
+    const a = alpha[i]
+    d[p] = a
+    d[p + 1] = a
+    d[p + 2] = a
+    d[p + 3] = 255
+  }
+  sctx.putImageData(img, 0, 0)
+  await yieldToMain()
+
+  const big = document.createElement('canvas')
+  big.width = dw
+  big.height = dh
+  const bctx = big.getContext('2d', { willReadFrequently: true })
+  if (!bctx) throw new Error('Canvas qo‘llab-quvvatlanmaydi')
+  bctx.imageSmoothingEnabled = true
+  bctx.imageSmoothingQuality = 'high'
+  bctx.drawImage(small, 0, 0, dw, dh)
+  await yieldToMain()
+
+  const bigData = bctx.getImageData(0, 0, dw, dh).data
+  const out = new Uint8ClampedArray(dw * dh)
+  for (let i = 0; i < out.length; i++) {
+    out[i] = bigData[i * 4]
+  }
+  return out
+}
+
+async function loadRgb(
+  source: Blob,
   w: number,
   h: number,
-): Promise<Uint8ClampedArray | null> {
+): Promise<Uint8ClampedArray> {
+  const bmp = await createImageBitmap(source)
   try {
-    const bmp = await createImageBitmap(originalBlob, {
-      resizeWidth: w,
-      resizeHeight: h,
-      resizeQuality: 'high',
-    })
-    try {
-      const c = document.createElement('canvas')
-      c.width = w
-      c.height = h
-      const cx = c.getContext('2d', { willReadFrequently: true })
-      if (!cx) return null
-      cx.drawImage(bmp, 0, 0, w, h)
-      return cx.getImageData(0, 0, w, h).data
-    } finally {
-      bmp.close()
-    }
-  } catch {
-    return null
+    const c = document.createElement('canvas')
+    c.width = w
+    c.height = h
+    const cx = c.getContext('2d', { willReadFrequently: true })
+    if (!cx) throw new Error('Canvas qo‘llab-quvvatlanmaydi')
+    cx.imageSmoothingEnabled = true
+    cx.imageSmoothingQuality = 'high'
+    cx.drawImage(bmp, 0, 0, w, h)
+    return cx.getImageData(0, 0, w, h).data
+  } finally {
+    bmp.close()
   }
 }
 
-export async function refineCutout(cutoutBlob: Blob, originalBlob?: Blob): Promise<Blob> {
+export interface RefineOptions {
+  /** Full-resolution source (original file) for sharp RGB */
+  exportSource?: Blob
+  exportWidth?: number
+  exportHeight?: number
+}
+
+/**
+ * @param cutoutBlob - PNG from removeBackground (inference size)
+ * @param options - full-res composite targets
+ */
+export async function refineCutout(
+  cutoutBlob: Blob,
+  options: RefineOptions = {},
+): Promise<Blob> {
   const cutout = await blobToImageData(cutoutBlob)
   await yieldToMain()
 
-  const { width: w, height: h, data: cut } = cutout
-  const n = w * h
+  const sw = cutout.width
+  const sh = cutout.height
+  const cut = cutout.data
+  const n = sw * sh
 
   let opaque = 0
   for (let p = 3; p < cut.length; p += 4) {
@@ -165,7 +223,7 @@ export async function refineCutout(cutoutBlob: Blob, originalBlob?: Blob): Promi
   const mode = detectEdgeMode(cut, n)
   await yieldToMain()
 
-  const alpha = await refineAlphaFast(cut, w, h, mode)
+  let alpha = await refineAlphaFast(cut, sw, sh, mode)
   await yieldToMain()
 
   let kept = 0
@@ -178,20 +236,31 @@ export async function refineCutout(cutoutBlob: Blob, originalBlob?: Blob): Promi
     )
   }
 
-  let rgb: Uint8ClampedArray = cut
-  if (originalBlob) {
-    const fromOrig = await loadRgbMatching(originalBlob, w, h)
-    if (fromOrig) rgb = fromOrig
+  // Target export resolution (full-res composite)
+  const dw = options.exportWidth && options.exportWidth > 0 ? options.exportWidth : sw
+  const dh = options.exportHeight && options.exportHeight > 0 ? options.exportHeight : sh
+  const needsUpscale = Boolean(options.exportSource) && (dw !== sw || dh !== sh)
+
+  if (needsUpscale) {
+    alpha = await upscaleAlpha(alpha, sw, sh, dw, dh)
+    await yieldToMain()
+  }
+
+  let rgb: Uint8ClampedArray
+  if (options.exportSource) {
+    rgb = await loadRgb(options.exportSource, dw, dh)
+  } else {
+    rgb = cut
   }
   await yieldToMain()
 
-  const out = new ImageData(w, h)
+  const out = new ImageData(dw, dh)
   const d = out.data
 
-  await mapRows(h, 80, (y0, y1) => {
+  await mapRows(dh, 64, (y0, y1) => {
     for (let y = y0; y < y1; y++) {
-      for (let x = 0; x < w; x++) {
-        const i = y * w + x
+      for (let x = 0; x < dw; x++) {
+        const i = y * dw + x
         const p = i * 4
         const a = alpha[i]
         if (a < 3) {
@@ -209,13 +278,14 @@ export async function refineCutout(cutoutBlob: Blob, originalBlob?: Blob): Promi
     }
   })
 
+  // Soft edge despill at export res (only mid-alpha)
   if (mode === 'soft') {
-    await mapRows(h, 48, (y0, y1) => {
+    await mapRows(dh, 40, (y0, y1) => {
       const yStart = Math.max(1, y0)
-      const yEnd = Math.min(h - 1, y1)
+      const yEnd = Math.min(dh - 1, y1)
       for (let y = yStart; y < yEnd; y++) {
-        for (let x = 1; x < w - 1; x++) {
-          const i = y * w + x
+        for (let x = 1; x < dw - 1; x++) {
+          const i = y * dw + x
           const a = alpha[i]
           if (a === 0 || a > 240) continue
           const p = i * 4
@@ -233,8 +303,8 @@ export async function refineCutout(cutoutBlob: Blob, originalBlob?: Blob): Promi
           }
           tryN(i - 1)
           tryN(i + 1)
-          tryN(i - w)
-          tryN(i + w)
+          tryN(i - dw)
+          tryN(i + dw)
           if (c === 0) continue
           const t = (1 - a / 255) * 0.65
           d[p] = Math.round(d[p] * (1 - t) + (r / c) * t)

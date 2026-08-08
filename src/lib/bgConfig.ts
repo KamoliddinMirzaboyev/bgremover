@@ -1,22 +1,23 @@
 import type { Config } from '@imgly/background-removal'
-
-/** Quantized model: ~2× smaller download + faster inference, quality still strong */
-export const MODEL: NonNullable<Config['model']> = 'isnet_quint8'
+import { QUALITY_PRESETS, type QualityMode } from '../types'
 
 export function supportsWebGpu(): boolean {
   return typeof navigator !== 'undefined' && 'gpu' in navigator
 }
 
-export function createBgConfig(onProgress?: Config['progress']): Config {
+export function createBgConfig(
+  quality: QualityMode = 'fast',
+  onProgress?: Config['progress'],
+): Config {
   const gpu = supportsWebGpu()
+  const preset = QUALITY_PRESETS[quality]
   return {
-    model: MODEL,
+    model: preset.model,
     device: gpu ? 'gpu' : 'cpu',
-    // Worker only used with WebGPU in onnxruntime path — keeps UI responsive
     proxyToWorker: gpu,
     output: {
       format: 'image/png',
-      quality: 0.9,
+      quality: quality === 'quality' ? 1 : 0.92,
     },
     progress: onProgress,
   }

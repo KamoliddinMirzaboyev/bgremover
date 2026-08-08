@@ -2,6 +2,9 @@ export type AppStep = 'upload' | 'processing' | 'studio'
 
 export type BackgroundMode = 'transparent' | 'color' | 'image'
 
+/** Fast = quint8 + smaller AI input; quality = fp16 + larger AI + full-res export */
+export type QualityMode = 'fast' | 'quality'
+
 export interface BackgroundState {
   mode: BackgroundMode
   color: string
@@ -31,3 +34,24 @@ export const COLOR_PRESETS = [
   { name: 'Green', value: '#16A34A' },
   { name: 'Red', value: '#DC2626' },
 ] as const
+
+export const QUALITY_PRESETS = {
+  fast: {
+    id: 'fast' as const,
+    label: 'Tez',
+    labelEn: 'Fast',
+    hint: 'Tezroq · yaxshi sifat',
+    model: 'isnet_quint8' as const,
+    maxInferenceEdge: 1280,
+    maxExportEdge: 2560,
+  },
+  quality: {
+    id: 'quality' as const,
+    label: 'Yuqori sifat',
+    labelEn: 'High quality',
+    hint: 'Sekinroq · eng yaxshi chetlar',
+    model: 'isnet_fp16' as const,
+    maxInferenceEdge: 2048,
+    maxExportEdge: 4096,
+  },
+} as const

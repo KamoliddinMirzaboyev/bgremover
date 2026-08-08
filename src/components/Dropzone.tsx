@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState, type DragEvent, type ChangeEvent } from 'react'
 import { ImagePlus, Upload } from 'lucide-react'
-import { ACCEPTED_EXTENSIONS } from '../types'
+import { QualityToggle } from './QualityToggle'
+import { ACCEPTED_EXTENSIONS, type QualityMode } from '../types'
 
 const SAMPLES = [
   { src: '/samples/person1.jpg', name: 'person1.jpg', label: 'Namuna 1' },
@@ -11,10 +12,12 @@ const SAMPLES = [
 interface Props {
   onFile: (file: File) => void
   onSample: (url: string, name: string) => void
+  quality: QualityMode
+  onQualityChange: (mode: QualityMode) => void
   disabled?: boolean
 }
 
-export function Dropzone({ onFile, onSample, disabled }: Props) {
+export function Dropzone({ onFile, onSample, quality, onQualityChange, disabled }: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [dragging, setDragging] = useState(false)
 
@@ -60,6 +63,8 @@ export function Dropzone({ onFile, onSample, disabled }: Props) {
           transparent PNG. Rasm serverga yuborilmaydi.
         </p>
       </div>
+
+      <QualityToggle value={quality} onChange={onQualityChange} disabled={disabled} />
 
       <div
         role="button"

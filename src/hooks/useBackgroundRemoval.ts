@@ -3,30 +3,40 @@ import { preload, removeBackground } from '@imgly/background-removal'
 import { createBgConfig } from '../lib/bgConfig'
 import { prepareForInference } from '../lib/imagePrep'
 import { ProgressController, yieldToMain } from '../lib/progress'
+import { loadQualityMode, saveQualityMode } from '../lib/qualityStore'
 import { refineCutout } from '../lib/refineMatte'
-import type { ProcessProgress } from '../types'
+import type { ProcessProgress, QualityMode } from '../types'
 
 interface Result {
   originalUrl: string
   resultUrl: string
   fileName: string
+  quality: QualityMode
+  width: number
+  height: number
 }
 
-let preloadPromise: Promise<void> | null = null
+const preloadCache = new Map<QualityMode, Promise<void>>()
 
-function ensurePreloaded(): Promise<void> {
-  if (!preloadPromise) {
-    preloadPromise = preload(createBgConfig()).catch((err) => {
-      preloadPromise = null
+function ensurePreloaded(quality: QualityMode): Promise<void> {
+  let p = preloadCache.get(quality)
+  if (!p) {
+    p = preload(createBgConfig(quality)).catch((err) => {
+      preloadCache.delete(quality)
       throw err
     })
+    preloadCache.set(quality, p)
   }
-  return preloadPromise
+  return p
 }
 
 export function useBackgroundRemoval() {
   const [progress, setProgress] = useState<ProcessProgress | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [quality, setQualityState] = useState<QualityMode>(() => loadQualityMode())
+  const qualityRef = useRef(quality)
+  qualityRef.current = quality
+
   const urlsRef = useRef<string[]>([])
   const busyRef = useRef(false)
   const jobIdRef = useRef(0)
@@ -44,10 +54,17 @@ export function useBackgroundRemoval() {
     urlsRef.current = []
   }, [])
 
+  // Warm default + current quality model ASAP
   useEffect(() => {
-    void ensurePreloaded().catch(() => {
-      /* process path retries */
+    void ensurePreloaded(quality).catch(() => {
+      /* process retries */
     })
+  }, [quality])
+
+  const setQuality = useCallback((mode: QualityMode) => {
+    setQualityState(mode)
+    saveQualityMode(mode)
+    void ensurePreloaded(mode).catch(() => undefined)
   }, [])
 
   const disposeTracker = () => {
@@ -66,6 +83,7 @@ export function useBackgroundRemoval() {
     if (busyRef.current) return null
     busyRef.current = true
     const jobId = ++jobIdRef.current
+    const mode = qualityRef.current
     setError(null)
     disposeTracker()
 
@@ -89,12 +107,14 @@ export function useBackgroundRemoval() {
     try {
       await yieldToMain()
 
-      tracker.setStage('prep', 0.2, 'Rasm tayyorlanmoqda...')
-      const prepP = prepareForInference(file)
-      const warmP = ensurePreloaded().catch(() => undefined)
+      tracker.setStage('prep', 0.15, 'Rasm tayyorlanmoqda...')
+      const prepP = prepareForInference(file, mode)
+      const warmP = ensurePreloaded(mode).catch(() => undefined)
 
-      // Soft progress while download/preload may still be running
-      tracker.startNudge('fetch', 'AI model yuklanmoqda...')
+      tracker.startNudge(
+        'fetch',
+        mode === 'quality' ? 'Yuqori sifat modeli yuklanmoqda...' : 'AI model yuklanmoqda...',
+      )
 
       const [prepared] = await Promise.all([prepP, warmP])
       if (jobId !== jobIdRef.current) {
@@ -106,14 +126,17 @@ export function useBackgroundRemoval() {
       tracker.setStage('fetch', 1, 'Model tayyor')
       await yieldToMain()
 
-      const config = createBgConfig((key, current, total) => {
+      const config = createBgConfig(mode, (key, current, total) => {
         tracker.fromLibrary(key, current, total)
       })
 
-      tracker.startNudge('compute', 'Subyekt aniqlanmoqda...')
+      tracker.startNudge(
+        'compute',
+        mode === 'quality' ? 'Yuqori sifatda aniqlanmoqda...' : 'Subyekt aniqlanmoqda...',
+      )
       await yieldToMain()
 
-      const rawBlob = await removeBackground(prepared, config)
+      const rawBlob = await removeBackground(prepared.inference, config)
       if (jobId !== jobIdRef.current) {
         dropOriginal()
         return null
@@ -123,12 +146,16 @@ export function useBackgroundRemoval() {
       tracker.setStage('compute', 1, 'Segmentatsiya tayyor')
       await yieldToMain()
 
-      tracker.startNudge('refine', 'Chetlarni tozalanmoqda...')
-      // Two frames: paint progress before heavy canvas work
+      tracker.startNudge('refine', 'Chetlar + HD export...')
       await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())))
       await yieldToMain()
 
-      const blob = await refineCutout(rawBlob, prepared)
+      // Full-res: refined mask upscaled onto original RGB
+      const blob = await refineCutout(rawBlob, {
+        exportSource: prepared.exportSource,
+        exportWidth: prepared.exportWidth,
+        exportHeight: prepared.exportHeight,
+      })
       if (jobId !== jobIdRef.current) {
         dropOriginal()
         return null
@@ -145,6 +172,9 @@ export function useBackgroundRemoval() {
         originalUrl,
         resultUrl,
         fileName: base,
+        quality: mode,
+        width: prepared.exportWidth,
+        height: prepared.exportHeight,
       }
     } catch (e) {
       if (jobId !== jobIdRef.current) {
@@ -155,7 +185,7 @@ export function useBackgroundRemoval() {
       const message =
         e instanceof Error
           ? e.message.includes('memory') || e.message.includes('Memory')
-            ? 'Qurilmada xotira yetarli emas. Kichikroq rasm sinab ko‘ring.'
+            ? 'Qurilmada xotira yetarli emas. «Tez» rejimini yoki kichikroq rasm sinab ko‘ring.'
             : e.message.startsWith('Subyekt') || e.message.startsWith('Xatolik')
               ? e.message
               : e.message.length < 160
@@ -178,7 +208,6 @@ export function useBackgroundRemoval() {
       if (busyRef.current) return null
       setError(null)
 
-      // Lightweight fetch progress without resetting later peak badly
       setProgress({
         key: 'fetch',
         current: 2,
@@ -188,7 +217,7 @@ export function useBackgroundRemoval() {
       })
 
       try {
-        void ensurePreloaded().catch(() => undefined)
+        void ensurePreloaded(qualityRef.current).catch(() => undefined)
         const res = await fetch(url)
         if (!res.ok) throw new Error('Namuna rasm yuklanmadi')
         const blob = await res.blob()
@@ -213,6 +242,8 @@ export function useBackgroundRemoval() {
     progress,
     error,
     setError,
+    quality,
+    setQuality,
     processFile,
     processFromUrl,
     reset,

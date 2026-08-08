@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
-import type { ProcessProgress } from '../types'
+import type { ProcessProgress, QualityMode } from '../types'
+import { QUALITY_PRESETS } from '../types'
 
 interface Props {
   progress: ProcessProgress | null
   previewUrl?: string | null
   onCancel?: () => void
+  quality?: QualityMode
 }
 
 /**
@@ -40,10 +42,11 @@ function useSmoothPercent(target: number): number {
   return Math.max(shown, 0)
 }
 
-export function Processing({ progress, previewUrl, onCancel }: Props) {
+export function Processing({ progress, previewUrl, onCancel, quality = 'fast' }: Props) {
   const raw = progress?.percent ?? 0
   const percent = useSmoothPercent(raw)
   const label = progress?.label ?? 'Tayyorlanmoqda...'
+  const modeLabel = QUALITY_PRESETS[quality].label
 
   return (
     <section className="mx-auto flex w-full max-w-3xl flex-col items-center px-4 py-6 sm:py-10">
@@ -52,6 +55,7 @@ export function Processing({ progress, previewUrl, onCancel }: Props) {
           Rasmingiz ustida ishlanmoqda
         </h2>
         <p className="mt-1.5 min-h-[1.25rem] text-sm text-zinc-400">{label}</p>
+        <p className="mt-1 text-[11px] text-zinc-600">Rejim: {modeLabel}</p>
       </div>
 
       <div className="relative w-full overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950 shadow-[0_20px_60px_-20px_rgba(0,0,0,0.7)]">

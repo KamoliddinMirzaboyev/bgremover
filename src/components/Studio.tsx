@@ -3,17 +3,29 @@ import { Download, RotateCcw, ZoomIn, ZoomOut } from 'lucide-react'
 import { ComparisonSlider } from './ComparisonSlider'
 import { BackgroundToolbar } from './BackgroundToolbar'
 import { downloadComposed } from '../lib/canvas'
-import type { BackgroundState } from '../types'
+import { QUALITY_PRESETS, type BackgroundState, type QualityMode } from '../types'
 
 interface Props {
   originalUrl: string
   resultUrl: string
   fileName: string
+  quality: QualityMode
+  width: number
+  height: number
   onReset: () => void
   onError: (msg: string) => void
 }
 
-export function Studio({ originalUrl, resultUrl, fileName, onReset, onError }: Props) {
+export function Studio({
+  originalUrl,
+  resultUrl,
+  fileName,
+  quality,
+  width,
+  height,
+  onReset,
+  onError,
+}: Props) {
   const [background, setBackground] = useState<BackgroundState>({
     mode: 'transparent',
     color: '#FFFFFF',
@@ -66,6 +78,16 @@ export function Studio({ originalUrl, resultUrl, fileName, onReset, onError }: P
           <h2 className="text-lg font-semibold text-zinc-50">Studio</h2>
           <p className="text-sm text-zinc-500">
             Solishtiring, fonni sozlang va HD formatda yuklab oling
+          </p>
+          <p className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-zinc-500">
+            <span className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-0.5 text-zinc-300">
+              {QUALITY_PRESETS[quality].label}
+            </span>
+            {width > 0 && height > 0 && (
+              <span className="tabular-nums">
+                {width}×{height} px · full-res export
+              </span>
+            )}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">

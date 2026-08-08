@@ -8,12 +8,15 @@ import { SeoContent } from './components/SeoContent'
 import { Footer } from './components/Footer'
 import { useBackgroundRemoval } from './hooks/useBackgroundRemoval'
 import { validateImageFile } from './lib/canvas'
-import type { AppStep } from './types'
+import type { AppStep, QualityMode } from './types'
 
 interface StudioData {
   originalUrl: string
   resultUrl: string
   fileName: string
+  quality: QualityMode
+  width: number
+  height: number
 }
 
 export default function App() {
@@ -26,6 +29,8 @@ export default function App() {
     progress,
     error,
     setError,
+    quality,
+    setQuality,
     processFile,
     processFromUrl,
     reset,
@@ -127,18 +132,31 @@ export default function App() {
       <main className="flex flex-1 flex-col py-8 sm:py-12">
         {step === 'upload' && (
           <>
-            <Dropzone onFile={runProcess} onSample={runSample} />
+            <Dropzone
+              onFile={runProcess}
+              onSample={runSample}
+              quality={quality}
+              onQualityChange={setQuality}
+            />
             <SeoContent />
           </>
         )}
         {step === 'processing' && (
-          <Processing progress={progress} previewUrl={previewUrl} onCancel={handleCancel} />
+          <Processing
+            progress={progress}
+            previewUrl={previewUrl}
+            onCancel={handleCancel}
+            quality={quality}
+          />
         )}
         {step === 'studio' && studio && (
           <Studio
             originalUrl={studio.originalUrl}
             resultUrl={studio.resultUrl}
             fileName={studio.fileName}
+            quality={studio.quality}
+            width={studio.width}
+            height={studio.height}
             onReset={handleReset}
             onError={setError}
           />
