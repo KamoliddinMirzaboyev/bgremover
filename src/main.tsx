@@ -5,14 +5,23 @@ import App from './App.tsx'
 import { registerModelCacheSw } from './lib/registerSw'
 import { warmModelManifest } from './lib/warmCache'
 
-// Hide crawl-only bootstrap once React mounts (keeps initial HTML for bots)
-document.getElementById('seo-bootstrap')?.remove()
+function boot(): void {
+  // Only run in a real browser document (not workers / node)
+  if (typeof document === 'undefined') return
 
-registerModelCacheSw()
-void warmModelManifest()
+  document.getElementById('seo-bootstrap')?.remove()
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-)
+  const root = document.getElementById('root')
+  if (!root) return
+
+  registerModelCacheSw()
+  void warmModelManifest()
+
+  createRoot(root).render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  )
+}
+
+boot()

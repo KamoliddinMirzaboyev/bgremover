@@ -10,4 +10,13 @@ export default defineConfig({
   worker: {
     format: 'es',
   },
+  build: {
+    // Vite injects a modulepreload polyfill that uses bare `document` at the
+    // top of the entry chunk. That throws ReferenceError if the chunk is ever
+    // evaluated without a DOM (workers / some embedders). Modern browsers
+    // support <link rel="modulepreload"> natively — polyfill not needed.
+    modulePreload: {
+      polyfill: false,
+    },
+  },
 })

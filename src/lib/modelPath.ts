@@ -1,14 +1,20 @@
 /**
  * Model asset base URL.
- * - Default: IMG.LY CDN (library default if undefined)
- * - Override: VITE_IMGLY_PUBLIC_PATH=https://your.cdn/imgly/ or /imgly/
- * - Optional same-origin mirror: /imgly/ (if you deploy models there)
+ * - Default: IMG.LY CDN
+ * - Override: VITE_IMGLY_PUBLIC_PATH=/imgly/ or full CDN URL
+ *
+ * IMPORTANT: never touch bare `document` without a guard — Web Workers
+ * may have `window` polyfilled but no `document` (throws ReferenceError).
  */
 
 const PACKAGE_VERSION = '1.7.0'
 
 export const DEFAULT_IMGLY_CDN =
   `https://staticimgly.com/@imgly/background-removal-data/${PACKAGE_VERSION}/dist/`
+
+function hasDocument(): boolean {
+  return typeof globalThis !== 'undefined' && typeof globalThis.document !== 'undefined'
+}
 
 export function resolvePublicPath(): string {
   const env = import.meta.env.VITE_IMGLY_PUBLIC_PATH as string | undefined
@@ -17,21 +23,23 @@ export function resolvePublicPath(): string {
     return t.endsWith('/') ? t : `${t}/`
   }
 
-  // Prefer same-origin mirror when present (set at build via public/imgly/)
-  if (typeof window !== 'undefined') {
-    // Runtime flag from <meta name="imgly-public-path">
-    const meta = document.querySelector('meta[name="imgly-public-path"]')
-    const content = meta?.getAttribute('content')
-    if (content) {
-      const t = content.trim()
-      return t.endsWith('/') ? t : `${t}/`
+  if (hasDocument()) {
+    try {
+      const meta = globalThis.document.querySelector('meta[name="imgly-public-path"]')
+      const content = meta?.getAttribute('content')
+      if (content) {
+        const t = content.trim()
+        return t.endsWith('/') ? t : `${t}/`
+      }
+    } catch {
+      /* worker / restricted */
     }
   }
 
   return DEFAULT_IMGLY_CDN
 }
 
-/** URLs useful for Cache API / SW pre-warm (resources manifest) */
-export function resourcesManifestUrl(publicPath = resolvePublicPath()): string {
-  return new URL('resources.json', publicPath).href
+export function resourcesManifestUrl(publicPath?: string): string {
+  const base = publicPath ?? resolvePublicPath()
+  return new URL('resources.json', base).href
 }

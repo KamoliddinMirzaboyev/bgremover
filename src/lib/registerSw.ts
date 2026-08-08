@@ -1,8 +1,9 @@
-/** Register service worker (production) for model CDN caching */
+/** Register service worker (browser only) for model CDN caching */
 export function registerModelCacheSw(): void {
   if (typeof window === 'undefined') return
-  if (!('serviceWorker' in navigator)) return
-  // SW only useful over https / localhost
+  if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return
+  if (typeof document === 'undefined') return
+
   const ok =
     location.protocol === 'https:' ||
     location.hostname === 'localhost' ||
