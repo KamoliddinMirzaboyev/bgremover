@@ -4,7 +4,7 @@ import { createBgConfig } from '../lib/bgConfig'
 import { prepareForInference } from '../lib/imagePrep'
 import { ProgressController, yieldToMain } from '../lib/progress'
 import { loadQualityMode, saveQualityMode } from '../lib/qualityStore'
-import { refineCutout } from '../lib/refineMatte'
+import { refineCutout, type EdgeMode } from '../lib/refineMatte'
 import type { ProcessProgress, QualityMode } from '../types'
 
 interface Result {
@@ -14,6 +14,8 @@ interface Result {
   quality: QualityMode
   width: number
   height: number
+  /** hard = QR/logo — UI should default feather to 0 */
+  edgeMode: EdgeMode
 }
 
 const preloadCache = new Map<QualityMode, Promise<void>>()
@@ -151,7 +153,7 @@ export function useBackgroundRemoval() {
       await yieldToMain()
 
       // Full-res: refined mask upscaled onto original RGB
-      const blob = await refineCutout(rawBlob, {
+      const refined = await refineCutout(rawBlob, {
         exportSource: prepared.exportSource,
         exportWidth: prepared.exportWidth,
         exportHeight: prepared.exportHeight,
@@ -165,7 +167,7 @@ export function useBackgroundRemoval() {
       tracker.finish()
       await yieldToMain()
 
-      const resultUrl = trackUrl(URL.createObjectURL(blob))
+      const resultUrl = trackUrl(URL.createObjectURL(refined.blob))
       const base = file.name.replace(/\.[^.]+$/, '') || 'image'
 
       return {
@@ -175,6 +177,7 @@ export function useBackgroundRemoval() {
         quality: mode,
         width: prepared.exportWidth,
         height: prepared.exportHeight,
+        edgeMode: refined.edgeMode,
       }
     } catch (e) {
       if (jobId !== jobIdRef.current) {

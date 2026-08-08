@@ -4,6 +4,7 @@ import { ComparisonSlider } from './ComparisonSlider'
 import { BackgroundToolbar } from './BackgroundToolbar'
 import { downloadComposed } from '../lib/canvas'
 import { featherCutout, featherLabel } from '../lib/alphaFeather'
+import type { EdgeMode } from '../lib/refineMatte'
 import { QUALITY_PRESETS, type BackgroundState, type QualityMode } from '../types'
 
 interface Props {
@@ -13,6 +14,7 @@ interface Props {
   quality: QualityMode
   width: number
   height: number
+  edgeMode: EdgeMode
   onReset: () => void
   onError: (msg: string) => void
 }
@@ -24,6 +26,7 @@ export function Studio({
   quality,
   width,
   height,
+  edgeMode,
   onReset,
   onError,
 }: Props) {
@@ -34,8 +37,8 @@ export function Studio({
   })
   const [zoom, setZoom] = useState(1)
   const [downloading, setDownloading] = useState(false)
-  /** 0 = crisp, 100 = softest edge */
-  const [feather, setFeather] = useState(22)
+  /** QR/logo → 0 (crisp). Photo → light soft. Never blur graphics by default. */
+  const [feather, setFeather] = useState(() => (edgeMode === 'hard' ? 0 : 28))
   const [featheredUrl, setFeatheredUrl] = useState(resultUrl)
   const [featherBusy, setFeatherBusy] = useState(false)
   const featherBlobRef = useRef<string | null>(null)
@@ -136,6 +139,9 @@ export function Studio({
             <span className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-0.5 text-zinc-300">
               {QUALITY_PRESETS[quality].label}
             </span>
+            <span className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-0.5 text-zinc-400">
+              {edgeMode === 'hard' ? 'Grafika / QR' : 'Foto'}
+            </span>
             {width > 0 && height > 0 && (
               <span className="tabular-nums">
                 {width}×{height} px · full-res
@@ -232,7 +238,9 @@ export function Studio({
               aria-label="Chet yumshoqligi"
             />
             <p className="mt-2 text-[11px] leading-relaxed text-zinc-600">
-              0 = o‘tkir (logo/QR). 40–70 = odam/soch. Yuklab olish shu sozlamani ishlatadi.
+              {edgeMode === 'hard'
+                ? 'Grafika aniqlandi — 0 tavsiya (QR/logo). Yumshatish buzishi mumkin.'
+                : '0 = o‘tkir. 40–70 = odam/soch. Yuklab olish shu sozlamani ishlatadi.'}
             </p>
           </div>
 

@@ -8,6 +8,7 @@ import { SeoContent } from './components/SeoContent'
 import { Footer } from './components/Footer'
 import { useBackgroundRemoval } from './hooks/useBackgroundRemoval'
 import { validateImageFile } from './lib/canvas'
+import type { EdgeMode } from './lib/refineMatte'
 import type { AppStep, QualityMode } from './types'
 
 interface StudioData {
@@ -17,6 +18,7 @@ interface StudioData {
   quality: QualityMode
   width: number
   height: number
+  edgeMode: EdgeMode
 }
 
 export default function App() {
@@ -157,6 +159,7 @@ export default function App() {
             quality={studio.quality}
             width={studio.width}
             height={studio.height}
+            edgeMode={studio.edgeMode}
             onReset={handleReset}
             onError={setError}
           />
