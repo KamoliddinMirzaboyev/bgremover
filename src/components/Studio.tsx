@@ -37,8 +37,8 @@ export function Studio({
   })
   const [zoom, setZoom] = useState(1)
   const [downloading, setDownloading] = useState(false)
-  /** QR/logo → 0 (crisp). Photo → light soft. Never blur graphics by default. */
-  const [feather, setFeather] = useState(() => (edgeMode === 'hard' ? 0 : 28))
+  /** Default 0 — feather was making logos/QR look "chewed". User can raise for hair. */
+  const [feather, setFeather] = useState(0)
   const [featheredUrl, setFeatheredUrl] = useState(resultUrl)
   const [featherBusy, setFeatherBusy] = useState(false)
   const featherBlobRef = useRef<string | null>(null)
@@ -239,8 +239,8 @@ export function Studio({
             />
             <p className="mt-2 text-[11px] leading-relaxed text-zinc-600">
               {edgeMode === 'hard'
-                ? 'Grafika aniqlandi — 0 tavsiya (QR/logo). Yumshatish buzishi mumkin.'
-                : '0 = o‘tkir. 40–70 = odam/soch. Yuklab olish shu sozlamani ishlatadi.'}
+                ? 'Grafika/logo — 0 da qoldiring. Yumshatish chetlarni buzadi.'
+                : 'Default 0 (o‘tkir). Faqat soch/odam uchun 30–60 ga oshiring.'}
             </p>
           </div>
 

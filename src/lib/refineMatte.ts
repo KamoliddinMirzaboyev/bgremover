@@ -1,7 +1,9 @@
 /**
- * Cutout post-process focused on quality:
- * - HARD (QR/logo): binary mask, nearest upscale, dust kill, no soft haze
- * - SOFT (photo): smart edge + despill
+ * High-quality cutout post-process:
+ * - Fill interior holes (soccer ball panels, logo gaps AI wrongly punched)
+ * - Kill only pale fringe haze (not dark subject interiors)
+ * - Hard: binary + nearest upscale; Soft: smart edge + despill
+ * - No default feather blur (UI defaults to 0)
  */
 
 import { yieldToMain } from './progress'
@@ -44,10 +46,6 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
   return t * t * (3 - 2 * t)
 }
 
-/**
- * Detect logo/QR vs photo.
- * Uses alpha histogram + RGB color count (graphics = few flat colors).
- */
 function detectEdgeMode(rgba: Uint8ClampedArray, n: number): EdgeMode {
   const step = Math.max(1, Math.floor(n / 6000))
   let mid = 0
@@ -62,7 +60,6 @@ function detectEdgeMode(rgba: Uint8ClampedArray, n: number): EdgeMode {
       kept++
       if (a > 20 && a < 230) mid++
       if (a >= 230) solid++
-      // quantize RGB for palette size
       const r = rgba[p] >> 4
       const g = rgba[p + 1] >> 4
       const b = rgba[p + 2] >> 4
@@ -71,21 +68,16 @@ function detectEdgeMode(rgba: Uint8ClampedArray, n: number): EdgeMode {
   }
 
   if (kept === 0) return 'soft'
-
   const midRatio = mid / kept
   const solidRatio = solid / kept
   const palette = colorBuckets.size
 
-  // Graphics: mostly solid alpha + small palette (QR, logo, icons)
-  if (palette <= 48 && solidRatio > 0.55 && midRatio < 0.35) return 'hard'
-  if (midRatio < 0.12) return 'hard'
-  if (palette <= 24 && midRatio < 0.4) return 'hard'
-
-  // Large mid-alpha band → photo hair/soft
-  if (midRatio > 0.18) return 'soft'
-
-  // Default: if mostly opaque subject with little haze → hard
-  return solidRatio > 0.7 ? 'hard' : 'soft'
+  // Logos / icons / QR: limited palette or mostly solid alpha
+  if (palette <= 64 && solidRatio > 0.45) return 'hard'
+  if (midRatio < 0.16) return 'hard'
+  if (palette <= 32) return 'hard'
+  if (midRatio > 0.22) return 'soft'
+  return solidRatio > 0.62 ? 'hard' : 'soft'
 }
 
 async function mapRows(
@@ -119,7 +111,100 @@ function max4(src: Uint8ClampedArray, w: number, h: number, x: number, y: number
   return m
 }
 
-/** Aggressive hard matte for QR/logos — kills white fringe haze */
+/**
+ * Fill transparent holes that do NOT touch the image border.
+ * Fixes soccer-ball panels / logo interiors AI wrongly punched out.
+ */
+function fillInteriorHoles(
+  alpha: Uint8ClampedArray,
+  w: number,
+  h: number,
+): Uint8ClampedArray {
+  const n = w * h
+  // 1 = true background (connected to border through transparent pixels)
+  const exterior = new Uint8Array(n)
+  const qx = new Int32Array(n)
+  const qy = new Int32Array(n)
+  let head = 0
+  let tail = 0
+
+  const push = (x: number, y: number) => {
+    const i = y * w + x
+    if (exterior[i]) return
+    if (alpha[i] > 0) return
+    exterior[i] = 1
+    qx[tail] = x
+    qy[tail] = y
+    tail++
+  }
+
+  for (let x = 0; x < w; x++) {
+    push(x, 0)
+    push(x, h - 1)
+  }
+  for (let y = 0; y < h; y++) {
+    push(0, y)
+    push(w - 1, y)
+  }
+
+  while (head < tail) {
+    const x = qx[head]
+    const y = qy[head]
+    head++
+    if (x > 0) push(x - 1, y)
+    if (x < w - 1) push(x + 1, y)
+    if (y > 0) push(x, y - 1)
+    if (y < h - 1) push(x, y + 1)
+  }
+
+  const out = new Uint8ClampedArray(alpha)
+  for (let i = 0; i < n; i++) {
+    // Transparent but not exterior → hole inside subject
+    if (out[i] === 0 && !exterior[i]) {
+      out[i] = 255
+    }
+  }
+  return out
+}
+
+/**
+ * Recover dark subject pixels AI marked as bg (black ball panels).
+ * If low alpha but majority of neighbors are solid subject → keep as subject.
+ */
+function recoverDarkInteriors(
+  alpha: Uint8ClampedArray,
+  rgba: Uint8ClampedArray,
+  w: number,
+  h: number,
+): Uint8ClampedArray {
+  const out = new Uint8ClampedArray(alpha)
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const i = y * w + x
+      if (out[i] >= 200) continue
+      const p = i * 4
+      const a = rgba[p + 3]
+      // only consider pixels AI was unsure about or punched
+      if (a > 220) continue
+
+      let solidN = 0
+      for (let dy = -2; dy <= 2; dy++) {
+        for (let dx = -2; dx <= 2; dx++) {
+          if (dx === 0 && dy === 0) continue
+          const j = (y + dy) * w + (x + dx)
+          if (out[j] >= 200) solidN++
+        }
+      }
+      // Surrounded by subject → restore
+      if (solidN >= 12) {
+        out[i] = 255
+      }
+    }
+  }
+  return out
+}
+
+/** Hard matte: clean graphics without eating dark interiors or creating holes */
 async function refineAlphaHard(
   src: Uint8ClampedArray,
   w: number,
@@ -128,56 +213,53 @@ async function refineAlphaHard(
   const n = w * h
   const bin = new Uint8ClampedArray(n)
 
-  // High threshold: semi-transparent haze (typical AI fringe) → background
   await mapRows(h, 64, (y0, y1) => {
     for (let y = y0; y < y1; y++) {
       for (let x = 0; x < w; x++) {
         const i = y * w + x
-        const a = src[i * 4 + 3]
-        // Also reject bright near-white fringe with low alpha
-        const r = src[i * 4]
-        const g = src[i * 4 + 1]
-        const b = src[i * 4 + 2]
+        const p = i * 4
+        const a = src[p + 3]
+        const r = src[p]
+        const g = src[p + 1]
+        const b = src[p + 2]
         const lum = (r + g + b) / 3
-        // Haze: pale + not fully opaque
-        const isHaze = a < 200 && lum > 200 && a > 0
-        if (isHaze || a < 140) {
+
+        // Pale fringe only (white/gray smudge) — not dark logo parts
+        const paleHaze = a > 0 && a < 210 && lum > 210 && r > 190 && g > 190 && b > 190
+
+        if (paleHaze) {
           bin[i] = 0
-        } else {
+        } else if (a >= 100) {
           bin[i] = 255
+        } else if (a >= 40) {
+          // mid: keep if not pale (could be colored glow edge)
+          bin[i] = lum < 200 ? 255 : 0
+        } else {
+          bin[i] = 0
         }
       }
     }
   })
 
-  // Open: remove 1px dust (erode → dilate)
-  const eroded = new Uint8ClampedArray(n)
-  await mapRows(h, 64, (y0, y1) => {
-    for (let y = y0; y < y1; y++) {
-      for (let x = 0; x < w; x++) {
-        eroded[y * w + x] = min4(bin, w, h, x, y)
-      }
-    }
-  })
-  const opened = new Uint8ClampedArray(n)
-  await mapRows(h, 64, (y0, y1) => {
-    for (let y = y0; y < y1; y++) {
-      for (let x = 0; x < w; x++) {
-        opened[y * w + x] = max4(eroded, w, h, x, y)
-      }
-    }
-  })
+  // Recover dark interiors (ball panels)
+  let alpha = recoverDarkInteriors(bin, src, w, h)
+  await yieldToMain()
 
-  // Close: fill pinholes inside modules (dilate → erode)
+  // Fill enclosed holes
+  alpha = fillInteriorHoles(alpha, w, h)
+  await yieldToMain()
+
+  // Morphological CLOSE only (dilate→erode) — joins gaps, does NOT punch holes
+  // (open/erode-first was destroying ball panels and thin logo strokes)
   const dilated = new Uint8ClampedArray(n)
   await mapRows(h, 64, (y0, y1) => {
     for (let y = y0; y < y1; y++) {
       for (let x = 0; x < w; x++) {
-        dilated[y * w + x] = max4(opened, w, h, x, y)
+        dilated[y * w + x] = max4(alpha, w, h, x, y)
       }
     }
   })
-  let closed = new Uint8ClampedArray(n)
+  const closed = new Uint8ClampedArray(n)
   await mapRows(h, 64, (y0, y1) => {
     for (let y = y0; y < y1; y++) {
       for (let x = 0; x < w; x++) {
@@ -186,17 +268,49 @@ async function refineAlphaHard(
     }
   })
 
-  // Outer choke (1px) — removes remaining halo ring without eating blocks too hard
-  const choked = new Uint8ClampedArray(n)
+  // Second close pass for larger gaps
+  const dil2 = new Uint8ClampedArray(n)
   await mapRows(h, 64, (y0, y1) => {
     for (let y = y0; y < y1; y++) {
       for (let x = 0; x < w; x++) {
-        choked[y * w + x] = min4(closed, w, h, x, y)
+        dil2[y * w + x] = max4(closed, w, h, x, y)
+      }
+    }
+  })
+  let result = new Uint8ClampedArray(n)
+  await mapRows(h, 64, (y0, y1) => {
+    for (let y = y0; y < y1; y++) {
+      for (let x = 0; x < w; x++) {
+        result[y * w + x] = min4(dil2, w, h, x, y)
       }
     }
   })
 
-  return choked
+  const filled2 = fillInteriorHoles(result, w, h)
+  await yieldToMain()
+
+  // Light outer clean: only remove isolated 1px exterior dust (not full open)
+  const cleaned = new Uint8ClampedArray(n)
+  await mapRows(h, 64, (y0, y1) => {
+    for (let y = y0; y < y1; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x
+        if (filled2[i] === 0) {
+          cleaned[i] = 0
+          continue
+        }
+        // Drop lone speckles: solid pixel with almost no solid neighbors
+        let nSolid = 0
+        if (x > 0 && filled2[i - 1]) nSolid++
+        if (x < w - 1 && filled2[i + 1]) nSolid++
+        if (y > 0 && filled2[i - w]) nSolid++
+        if (y < h - 1 && filled2[i + w]) nSolid++
+        cleaned[i] = nSolid === 0 ? 0 : 255
+      }
+    }
+  })
+
+  return cleaned
 }
 
 async function refineAlphaSoft(
@@ -210,16 +324,39 @@ async function refineAlphaSoft(
     for (let y = y0; y < y1; y++) {
       for (let x = 0; x < w; x++) {
         const i = y * w + x
-        const s = smoothstep(0.06, 0.9, src[i * 4 + 3] / 255)
+        const p = i * 4
+        const a = src[p + 3]
+        const r = src[p]
+        const g = src[p + 1]
+        const b = src[p + 2]
+        const lum = (r + g + b) / 3
+        // kill pale fringe only
+        if (a < 200 && lum > 215 && a > 0) {
+          a0[i] = 0
+          continue
+        }
+        const s = smoothstep(0.05, 0.88, a / 255)
         const v = Math.round(s * 255)
-        a0[i] = v < 8 ? 0 : v > 250 ? 255 : v
+        a0[i] = v < 6 ? 0 : v > 252 ? 255 : v
       }
     }
   })
+
+  // Hole fill on near-binary version, then restore soft edges
+  const bin = new Uint8ClampedArray(n)
+  for (let i = 0; i < n; i++) bin[i] = a0[i] >= 90 ? 255 : 0
+  const recovered = recoverDarkInteriors(bin, src, w, h)
+  const filled = fillInteriorHoles(recovered, w, h)
+
+  // Where we filled a hole, force solid; elsewhere keep soft alpha
+  for (let i = 0; i < n; i++) {
+    if (filled[i] === 255 && a0[i] < 90) {
+      a0[i] = 255
+    }
+  }
   return a0
 }
 
-/** Nearest-neighbor upscale for hard masks (no soft blur!) */
 async function upscaleAlphaNearest(
   alpha: Uint8ClampedArray,
   sw: number,
@@ -234,7 +371,6 @@ async function upscaleAlphaNearest(
   small.height = sh
   const sctx = small.getContext('2d')
   if (!sctx) throw new Error('Canvas qo‘llab-quvvatlanmaydi')
-
   const img = sctx.createImageData(sw, sh)
   const d = img.data
   for (let i = 0; i < alpha.length; i++) {
@@ -253,7 +389,6 @@ async function upscaleAlphaNearest(
   big.height = dh
   const bctx = big.getContext('2d', { willReadFrequently: true })
   if (!bctx) throw new Error('Canvas qo‘llab-quvvatlanmaydi')
-  // CRITICAL: no smoothing for QR/logo
   bctx.imageSmoothingEnabled = false
   bctx.drawImage(small, 0, 0, dw, dh)
   await yieldToMain()
@@ -261,13 +396,12 @@ async function upscaleAlphaNearest(
   const bigData = bctx.getImageData(0, 0, dw, dh).data
   const out = new Uint8ClampedArray(dw * dh)
   for (let i = 0; i < out.length; i++) {
-    // Re-binary after scale
     out[i] = bigData[i * 4] >= 128 ? 255 : 0
   }
-  return out
+  // Fill holes again after scale
+  return fillInteriorHoles(out, dw, dh)
 }
 
-/** Smooth upscale for photo mattes */
 async function upscaleAlphaSmooth(
   alpha: Uint8ClampedArray,
   sw: number,
@@ -282,7 +416,6 @@ async function upscaleAlphaSmooth(
   small.height = sh
   const sctx = small.getContext('2d')
   if (!sctx) throw new Error('Canvas qo‘llab-quvvatlanmaydi')
-
   const img = sctx.createImageData(sw, sh)
   const d = img.data
   for (let i = 0; i < alpha.length; i++) {
@@ -314,11 +447,7 @@ async function upscaleAlphaSmooth(
   return out
 }
 
-async function loadRgb(
-  source: Blob,
-  w: number,
-  h: number,
-): Promise<Uint8ClampedArray> {
+async function loadRgb(source: Blob, w: number, h: number): Promise<Uint8ClampedArray> {
   const bmp = await createImageBitmap(source)
   try {
     const c = document.createElement('canvas')
@@ -346,9 +475,6 @@ export interface RefineResult {
   edgeMode: EdgeMode
 }
 
-/**
- * Refine AI cutout. Returns edgeMode so UI can default feather=0 for graphics.
- */
 export async function refineCutout(
   cutoutBlob: Blob,
   options: RefineOptions = {},
@@ -414,10 +540,10 @@ export async function refineCutout(
         : await upscaleAlphaSmooth(alpha, sw, sh, dw, dh)
     await yieldToMain()
   } else if (mode === 'hard') {
-    // Ensure binary even without upscale
     for (let i = 0; i < alpha.length; i++) {
       alpha[i] = alpha[i] >= 128 ? 255 : 0
     }
+    alpha = fillInteriorHoles(alpha, dw, dh)
   }
 
   let rgb: Uint8ClampedArray
@@ -443,7 +569,6 @@ export async function refineCutout(
           d[p + 2] = 0
           d[p + 3] = 0
         } else {
-          // Always original RGB (no AI fringe colors)
           d[p] = rgb[p]
           d[p + 1] = rgb[p + 1]
           d[p + 2] = rgb[p + 2]
