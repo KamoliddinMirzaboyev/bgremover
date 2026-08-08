@@ -5,6 +5,7 @@ import { prepareForInference } from '../lib/imagePrep'
 import { ProgressController, yieldToMain } from '../lib/progress'
 import { loadQualityMode, saveQualityMode } from '../lib/qualityStore'
 import { refineCutout, type EdgeMode } from '../lib/refineMatte'
+import { trySolidBackgroundCutout } from '../lib/solidBgMatte'
 import type { ProcessProgress, QualityMode } from '../types'
 
 interface Result {
@@ -125,49 +126,83 @@ export function useBackgroundRemoval() {
       }
 
       tracker.stopNudge()
-      tracker.setStage('fetch', 1, 'Model tayyor')
+      tracker.setStage('fetch', 1, 'Tayyorlanmoqda...')
       await yieldToMain()
 
-      const config = createBgConfig(mode, (key, current, total) => {
-        tracker.fromLibrary(key, current, total)
-      })
-
-      tracker.startNudge(
-        'compute',
-        mode === 'quality' ? 'Yuqori sifatda aniqlanmoqda...' : 'Subyekt aniqlanmoqda...',
+      // 1) Flat-background path (QR/logo) — much cleaner than AI for solid BG
+      tracker.setStage('compute', 0.15, 'Tekis fon tekshirilmoqda...')
+      await yieldToMain()
+      const solid = await trySolidBackgroundCutout(
+        prepared.exportSource,
+        prepared.exportWidth,
+        prepared.exportHeight,
       )
-      await yieldToMain()
-
-      const rawBlob = await removeBackground(prepared.inference, config)
       if (jobId !== jobIdRef.current) {
         dropOriginal()
         return null
       }
 
-      tracker.stopNudge()
-      tracker.setStage('compute', 1, 'Segmentatsiya tayyor')
-      await yieldToMain()
+      let resultBlob: Blob
+      let edgeMode: EdgeMode
 
-      tracker.startNudge('refine', 'Chetlar + HD export...')
-      await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())))
-      await yieldToMain()
+      if (solid && solid.confidence >= 0.42) {
+        tracker.setStage('compute', 0.9, 'Grafika fon olib tashlandi...')
+        await yieldToMain()
+        resultBlob = solid.blob
+        edgeMode = 'hard'
+      } else {
+        // 2) AI fallback for photos / complex backgrounds
+        const config = createBgConfig(mode, (key, current, total) => {
+          tracker.fromLibrary(key, current, total)
+        })
 
-      // Full-res: refined mask upscaled onto original RGB
-      const refined = await refineCutout(rawBlob, {
-        exportSource: prepared.exportSource,
-        exportWidth: prepared.exportWidth,
-        exportHeight: prepared.exportHeight,
-      })
-      if (jobId !== jobIdRef.current) {
-        dropOriginal()
-        return null
+        tracker.startNudge(
+          'compute',
+          mode === 'quality' ? 'Yuqori sifatda aniqlanmoqda...' : 'Subyekt aniqlanmoqda...',
+        )
+        await yieldToMain()
+
+        // Ensure model warm if we skipped wait earlier
+        await ensurePreloaded(mode).catch(() => undefined)
+        if (jobId !== jobIdRef.current) {
+          dropOriginal()
+          return null
+        }
+
+        const rawBlob = await removeBackground(prepared.inference, config)
+        if (jobId !== jobIdRef.current) {
+          dropOriginal()
+          return null
+        }
+
+        tracker.stopNudge()
+        tracker.setStage('compute', 1, 'Segmentatsiya tayyor')
+        await yieldToMain()
+
+        tracker.startNudge('refine', 'Chetlar + HD export...')
+        await new Promise<void>((r) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => r())),
+        )
+        await yieldToMain()
+
+        const refined = await refineCutout(rawBlob, {
+          exportSource: prepared.exportSource,
+          exportWidth: prepared.exportWidth,
+          exportHeight: prepared.exportHeight,
+        })
+        if (jobId !== jobIdRef.current) {
+          dropOriginal()
+          return null
+        }
+        tracker.stopNudge()
+        resultBlob = refined.blob
+        edgeMode = refined.edgeMode
       }
 
-      tracker.stopNudge()
       tracker.finish()
       await yieldToMain()
 
-      const resultUrl = trackUrl(URL.createObjectURL(refined.blob))
+      const resultUrl = trackUrl(URL.createObjectURL(resultBlob))
       const base = file.name.replace(/\.[^.]+$/, '') || 'image'
 
       return {
@@ -177,7 +212,7 @@ export function useBackgroundRemoval() {
         quality: mode,
         width: prepared.exportWidth,
         height: prepared.exportHeight,
-        edgeMode: refined.edgeMode,
+        edgeMode,
       }
     } catch (e) {
       if (jobId !== jobIdRef.current) {

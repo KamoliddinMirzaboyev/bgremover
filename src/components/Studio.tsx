@@ -140,7 +140,7 @@ export function Studio({
               {QUALITY_PRESETS[quality].label}
             </span>
             <span className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-0.5 text-zinc-400">
-              {edgeMode === 'hard' ? 'Grafika / QR' : 'Foto'}
+              {edgeMode === 'hard' ? 'Grafika · toza fon' : 'Foto · AI'}
             </span>
             {width > 0 && height > 0 && (
               <span className="tabular-nums">
