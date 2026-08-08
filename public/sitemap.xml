@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:xhtml="http://www.w3.org/1999/xhtml"
+        xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
+  <url>
+    <loc>https://bgremover.webportfolio.uz/</loc>
+    <lastmod>2026-08-08</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+    <xhtml:link rel="alternate" hreflang="uz" href="https://bgremover.webportfolio.uz/" />
+    <xhtml:link rel="alternate" hreflang="en" href="https://bgremover.webportfolio.uz/" />
+    <xhtml:link rel="alternate" hreflang="ru" href="https://bgremover.webportfolio.uz/" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://bgremover.webportfolio.uz/" />
+    <image:image>
+      <image:loc>https://bgremover.webportfolio.uz/og-image.jpg</image:loc>
+      <image:title>BG Remover — Free Online Background Remover</image:title>
+      <image:caption>Remove image background free online. Private, browser-based AI background remover.</image:caption>
+    </image:image>
+  </url>
+</urlset>

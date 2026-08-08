@@ -1,4 +1,9 @@
-import type { BackgroundState } from '../types'
+import {
+  ACCEPTED_TYPES,
+  MAX_FILE_SIZE_BYTES,
+  MAX_FILE_SIZE_MB,
+  type BackgroundState,
+} from '../types'
 
 function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -27,7 +32,6 @@ export async function composeImage(
     ctx.fillRect(0, 0, canvas.width, canvas.height)
   } else if (background.mode === 'image' && background.imageUrl) {
     const bg = await loadImage(background.imageUrl)
-    // Cover fit
     const scale = Math.max(canvas.width / bg.naturalWidth, canvas.height / bg.naturalHeight)
     const w = bg.naturalWidth * scale
     const h = bg.naturalHeight * scale
@@ -35,7 +39,6 @@ export async function composeImage(
     const y = (canvas.height - h) / 2
     ctx.drawImage(bg, x, y, w, h)
   }
-  // transparent: leave clear
 
   ctx.drawImage(subject, 0, 0)
   return canvas
@@ -71,22 +74,41 @@ export async function downloadComposed(
 }
 
 export function validateImageFile(file: File): string | null {
-  const allowed = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp']
   const name = file.name.toLowerCase()
+  const type = file.type.toLowerCase()
+
+  if (
+    type === 'image/heic' ||
+    type === 'image/heif' ||
+    name.endsWith('.heic') ||
+    name.endsWith('.heif')
+  ) {
+    return 'HEIC format qo‘llab-quvvatlanmaydi. iPhone’da JPG sifatida yuboring yoki PNG/WEBP ga o‘tkazing.'
+  }
+
+  const allowed = ACCEPTED_TYPES as readonly string[]
   const extOk = ['.png', '.jpg', '.jpeg', '.webp'].some((e) => name.endsWith(e))
-  if (!allowed.includes(file.type) && !extOk) {
+  if (!allowed.includes(type) && !extOk) {
     return 'Faqat PNG, JPG, JPEG yoki WEBP formatlarini yuklang.'
   }
-  const max = 12 * 1024 * 1024
-  if (file.size > max) {
-    return `Rasm juda katta. Maksimal hajm: 12 MB (hozirgi: ${(file.size / 1024 / 1024).toFixed(1)} MB).`
+  if (file.size > MAX_FILE_SIZE_BYTES) {
+    return `Rasm juda katta. Maksimal hajm: ${MAX_FILE_SIZE_MB} MB (hozirgi: ${(file.size / 1024 / 1024).toFixed(1)} MB).`
+  }
+  if (file.size === 0) {
+    return 'Fayl bo‘sh yoki buzilgan.'
   }
   return null
 }
 
 export function progressLabel(key: string): string {
   const k = key.toLowerCase()
-  if (k.includes('fetch') || k.includes('download') || k.includes('wasm') || k.includes('model') || k.includes('onnx')) {
+  if (
+    k.includes('fetch') ||
+    k.includes('download') ||
+    k.includes('wasm') ||
+    k.includes('model') ||
+    k.includes('onnx')
+  ) {
     return 'AI model yuklanmoqda...'
   }
   if (k.includes('session') || k.includes('init')) {
@@ -95,7 +117,7 @@ export function progressLabel(key: string): string {
   if (k.includes('compute') || k.includes('inference') || k.includes('process')) {
     return 'Subyekt aniqlanmoqda...'
   }
-  if (k.includes('refine') || k.includes('matte') || k.includes('post')) {
+  if (k.includes('refine') || k.includes('matte') || k.includes('post') || k.includes('prep')) {
     return 'Chetlarni tozalanmoqda...'
   }
   return 'Fon olib tashlanmoqda...'

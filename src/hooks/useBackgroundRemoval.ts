@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { preload, removeBackground } from '@imgly/background-removal'
-import type { Config } from '@imgly/background-removal'
-import { progressLabel } from '../lib/canvas'
+import { createBgConfig } from '../lib/bgConfig'
+import { prepareForInference } from '../lib/imagePrep'
+import { ProgressController, yieldToMain } from '../lib/progress'
 import { refineCutout } from '../lib/refineMatte'
 import type { ProcessProgress } from '../types'
 
@@ -11,31 +12,25 @@ interface Result {
   fileName: string
 }
 
-function supportsWebGpu(): boolean {
-  return typeof navigator !== 'undefined' && 'gpu' in navigator
-}
+let preloadPromise: Promise<void> | null = null
 
-function baseConfig(onProgress?: Config['progress']): Config {
-  return {
-    // Full-quality weights when available path; fp16 is default balance.
-    // Post-refine fixes residual halo regardless of model.
-    model: 'isnet_fp16',
-    device: supportsWebGpu() ? 'gpu' : 'cpu',
-    proxyToWorker: true,
-    output: {
-      format: 'image/png',
-      quality: 1,
-    },
-    progress: onProgress,
+function ensurePreloaded(): Promise<void> {
+  if (!preloadPromise) {
+    preloadPromise = preload(createBgConfig()).catch((err) => {
+      preloadPromise = null
+      throw err
+    })
   }
+  return preloadPromise
 }
 
 export function useBackgroundRemoval() {
   const [progress, setProgress] = useState<ProcessProgress | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const abortRef = useRef(false)
   const urlsRef = useRef<string[]>([])
   const busyRef = useRef(false)
+  const jobIdRef = useRef(0)
+  const trackerRef = useRef<ProgressController | null>(null)
 
   const trackUrl = (url: string) => {
     urlsRef.current.push(url)
@@ -49,86 +44,99 @@ export function useBackgroundRemoval() {
     urlsRef.current = []
   }, [])
 
-  // Warm model on idle so first cutout is faster
   useEffect(() => {
-    const run = () => {
-      void preload(baseConfig()).catch(() => {
-        /* ignore preload errors — process will retry */
-      })
-    }
-    if (typeof requestIdleCallback !== 'undefined') {
-      const id = requestIdleCallback(run, { timeout: 2500 })
-      return () => cancelIdleCallback(id)
-    }
-    const t = window.setTimeout(run, 400)
-    return () => window.clearTimeout(t)
+    void ensurePreloaded().catch(() => {
+      /* process path retries */
+    })
+  }, [])
+
+  const disposeTracker = () => {
+    trackerRef.current?.dispose()
+    trackerRef.current = null
+  }
+
+  const cancel = useCallback(() => {
+    jobIdRef.current += 1
+    busyRef.current = false
+    disposeTracker()
+    setProgress(null)
   }, [])
 
   const processFile = useCallback(async (file: File): Promise<Result | null> => {
     if (busyRef.current) return null
     busyRef.current = true
-    abortRef.current = false
+    const jobId = ++jobIdRef.current
     setError(null)
-    setProgress({
-      key: 'start',
-      current: 0,
-      total: 1,
-      percent: 0,
-      label: 'AI model yuklanmoqda...',
-    })
+    disposeTracker()
+
+    const tracker = new ProgressController(
+      (p) => {
+        if (jobId !== jobIdRef.current) return
+        setProgress(p)
+      },
+      () => jobId === jobIdRef.current,
+    )
+    trackerRef.current = tracker
+    tracker.setStage('prep', 0, 'Rasm tayyorlanmoqda...')
 
     const originalUrl = trackUrl(URL.createObjectURL(file))
 
+    const dropOriginal = () => {
+      URL.revokeObjectURL(originalUrl)
+      urlsRef.current = urlsRef.current.filter((u) => u !== originalUrl)
+    }
+
     try {
-      const config = baseConfig((key, current, total) => {
-        if (abortRef.current) return
-        const percent = total > 0 ? Math.min(92, Math.round((current / total) * 100)) : 0
-        setProgress({
-          key,
-          current,
-          total,
-          percent,
-          label: progressLabel(key),
-        })
-      })
+      await yieldToMain()
 
-      setProgress((p) =>
-        p
-          ? { ...p, label: 'Subyekt aniqlanmoqda...', percent: Math.max(p.percent, 10) }
-          : null,
-      )
+      tracker.setStage('prep', 0.2, 'Rasm tayyorlanmoqda...')
+      const prepP = prepareForInference(file)
+      const warmP = ensurePreloaded().catch(() => undefined)
 
-      const rawBlob = await removeBackground(file, config)
+      // Soft progress while download/preload may still be running
+      tracker.startNudge('fetch', 'AI model yuklanmoqda...')
 
-      if (abortRef.current) {
-        URL.revokeObjectURL(originalUrl)
-        urlsRef.current = urlsRef.current.filter((u) => u !== originalUrl)
+      const [prepared] = await Promise.all([prepP, warmP])
+      if (jobId !== jobIdRef.current) {
+        dropOriginal()
         return null
       }
 
-      setProgress({
-        key: 'refine',
-        current: 1,
-        total: 1,
-        percent: 96,
-        label: 'Chetlarni tozalanmoqda...',
+      tracker.stopNudge()
+      tracker.setStage('fetch', 1, 'Model tayyor')
+      await yieldToMain()
+
+      const config = createBgConfig((key, current, total) => {
+        tracker.fromLibrary(key, current, total)
       })
 
-      const blob = await refineCutout(rawBlob, file)
+      tracker.startNudge('compute', 'Subyekt aniqlanmoqda...')
+      await yieldToMain()
 
-      if (abortRef.current) {
-        URL.revokeObjectURL(originalUrl)
-        urlsRef.current = urlsRef.current.filter((u) => u !== originalUrl)
+      const rawBlob = await removeBackground(prepared, config)
+      if (jobId !== jobIdRef.current) {
+        dropOriginal()
         return null
       }
 
-      setProgress({
-        key: 'done',
-        current: 1,
-        total: 1,
-        percent: 100,
-        label: 'Tayyor!',
-      })
+      tracker.stopNudge()
+      tracker.setStage('compute', 1, 'Segmentatsiya tayyor')
+      await yieldToMain()
+
+      tracker.startNudge('refine', 'Chetlarni tozalanmoqda...')
+      // Two frames: paint progress before heavy canvas work
+      await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())))
+      await yieldToMain()
+
+      const blob = await refineCutout(rawBlob, prepared)
+      if (jobId !== jobIdRef.current) {
+        dropOriginal()
+        return null
+      }
+
+      tracker.stopNudge()
+      tracker.finish()
+      await yieldToMain()
 
       const resultUrl = trackUrl(URL.createObjectURL(blob))
       const base = file.name.replace(/\.[^.]+$/, '') || 'image'
@@ -139,33 +147,48 @@ export function useBackgroundRemoval() {
         fileName: base,
       }
     } catch (e) {
-      URL.revokeObjectURL(originalUrl)
-      urlsRef.current = urlsRef.current.filter((u) => u !== originalUrl)
+      if (jobId !== jobIdRef.current) {
+        dropOriginal()
+        return null
+      }
+      dropOriginal()
       const message =
         e instanceof Error
           ? e.message.includes('memory') || e.message.includes('Memory')
             ? 'Qurilmada xotira yetarli emas. Kichikroq rasm sinab ko‘ring.'
-            : `Xatolik: ${e.message}`
+            : e.message.startsWith('Subyekt') || e.message.startsWith('Xatolik')
+              ? e.message
+              : e.message.length < 160
+                ? e.message
+                : 'Fon olib tashlashda xatolik yuz berdi. Qayta urinib ko‘ring.'
           : 'Fon olib tashlashda xatolik yuz berdi. Qayta urinib ko‘ring.'
       setError(message)
       setProgress(null)
       return null
     } finally {
-      busyRef.current = false
+      if (jobId === jobIdRef.current) {
+        busyRef.current = false
+        disposeTracker()
+      }
     }
   }, [])
 
   const processFromUrl = useCallback(
     async (url: string, name: string): Promise<Result | null> => {
+      if (busyRef.current) return null
       setError(null)
+
+      // Lightweight fetch progress without resetting later peak badly
       setProgress({
         key: 'fetch',
-        current: 0,
-        total: 1,
+        current: 2,
+        total: 100,
         percent: 2,
         label: 'Namuna yuklanmoqda...',
       })
+
       try {
+        void ensurePreloaded().catch(() => undefined)
         const res = await fetch(url)
         if (!res.ok) throw new Error('Namuna rasm yuklanmadi')
         const blob = await res.blob()
@@ -181,12 +204,10 @@ export function useBackgroundRemoval() {
   )
 
   const reset = useCallback(() => {
-    abortRef.current = true
-    busyRef.current = false
+    cancel()
     revokeAll()
-    setProgress(null)
     setError(null)
-  }, [revokeAll])
+  }, [cancel, revokeAll])
 
   return {
     progress,
@@ -195,5 +216,6 @@ export function useBackgroundRemoval() {
     processFile,
     processFromUrl,
     reset,
+    cancel,
   }
 }

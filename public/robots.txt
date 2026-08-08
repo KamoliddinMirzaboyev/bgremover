@@ -1,0 +1,47 @@
+# https://bgremover.webportfolio.uz
+User-agent: *
+Allow: /
+
+# Sitemaps
+Sitemap: https://bgremover.webportfolio.uz/sitemap.xml
+
+# Major crawlers
+User-agent: Googlebot
+Allow: /
+
+User-agent: Bingbot
+Allow: /
+
+User-agent: Yandex
+Allow: /
+
+User-agent: DuckDuckBot
+Allow: /
+
+# AI / answer engines (discoverability)
+User-agent: GPTBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: anthropic-ai
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+# Block junk scrapers lightly (optional)
+User-agent: AhrefsBot
+Crawl-delay: 10
+
+User-agent: SemrushBot
+Crawl-delay: 10
+
+Host: https://bgremover.webportfolio.uz

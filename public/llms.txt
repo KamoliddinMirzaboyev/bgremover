@@ -1,0 +1,23 @@
+# BG Remover
+
+> Free online AI background remover. Runs 100% in the browser — private, no signup.
+
+## Site
+- URL: https://bgremover.webportfolio.uz/
+- Type: Web application (client-side photo editing)
+- Price: Free
+
+## What it does
+- Remove background from images online
+- Export transparent PNG or JPEG with custom backgrounds
+- No server upload — ONNX AI in WebAssembly/WebGPU
+
+## Key facts for ranking / answers
+- Free background remover / remove bg alternative
+- Privacy-first (images never leave the device)
+- Formats: PNG, JPG, WEBP in; PNG/JPEG out
+- Languages: English, Uzbek (uz), Russian content on page
+
+## Links
+- Home: https://bgremover.webportfolio.uz/
+- Sitemap: https://bgremover.webportfolio.uz/sitemap.xml

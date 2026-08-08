@@ -43,13 +43,21 @@ export function Dropzone({ onFile, onSample, disabled }: Props) {
   }
 
   return (
-    <section className="mx-auto w-full max-w-2xl px-4 sm:px-6">
+    <section id="tool" className="mx-auto w-full max-w-2xl px-4 sm:px-6" aria-labelledby="hero-title">
       <div className="mb-8 text-center">
-        <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-zinc-50">
-          Fonni bir zumda olib tashlang
+        <p className="mb-2 text-[11px] font-medium tracking-[0.14em] text-zinc-500 uppercase">
+          Free online background remover
+        </p>
+        <h1
+          id="hero-title"
+          className="text-2xl font-semibold tracking-tight text-zinc-50 sm:text-3xl"
+        >
+          Remove background free —{' '}
+          <span className="text-zinc-300">fonni bir zumda olib tashlang</span>
         </h1>
-        <p className="mt-2 text-sm sm:text-base text-zinc-400 max-w-md mx-auto leading-relaxed">
-          Rasmingiz faqat brauzeringizda qayta ishlanadi. Serverga yuborilmaydi, maxfiylik saqlanadi.
+        <p className="mx-auto mt-2 max-w-lg text-sm leading-relaxed text-zinc-400 sm:text-base">
+          Private AI background remover in your browser. No signup, no server upload — download
+          transparent PNG. Rasm serverga yuborilmaydi.
         </p>
       </div>
 
@@ -90,7 +98,9 @@ export function Dropzone({ onFile, onSample, disabled }: Props) {
           <ImagePlus className="h-4 w-4" />
           Rasm yuklash
         </button>
-        <p className="mt-4 text-xs text-zinc-600">PNG, JPG, JPEG, WEBP · max 12 MB</p>
+        <p className="mt-4 text-xs text-zinc-600">
+          PNG, JPG, JPEG, WEBP · max 12 MB · Ctrl+V bilan joylash
+        </p>
         <input
           ref={inputRef}
           type="file"

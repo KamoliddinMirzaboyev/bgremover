@@ -37,3 +37,12 @@ Deploy the `dist` folder as a static site on Vercel. The app loads ONNX/WASM ass
 ## Privacy
 
 Images never leave the user’s device. All processing happens in the browser.
+
+## SEO (production)
+
+Live: https://bgremover.webportfolio.uz/
+
+- `robots.txt`, `sitemap.xml`, Open Graph, JSON-LD (WebApp / FAQ / HowTo)
+- After deploy: Google Search Console → submit `https://bgremover.webportfolio.uz/sitemap.xml`
+- Request indexing for the homepage URL
+- Optional: Bing Webmaster Tools + same sitemap
