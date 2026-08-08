@@ -38,6 +38,13 @@ Deploy the `dist` folder as a static site on Vercel. The app loads ONNX/WASM ass
 
 Images never leave the user’s device. All processing happens in the browser.
 
+## Quality & speed
+
+- **Tez / Yuqori sifat** toggle (quint8@~1280 vs fp16@~2048, device-adaptive)
+- Full-res mask export + smart soft edge + Studio **edge feather** slider
+- Service worker caches IMG.LY model assets for faster repeat visits
+- Optional self-host models: set `VITE_IMGLY_PUBLIC_PATH=/imgly/` (or CDN URL) and mirror assets under `public/imgly/`
+
 ## SEO (production)
 
 Live: https://bgremover.webportfolio.uz/

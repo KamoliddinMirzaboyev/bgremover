@@ -5,6 +5,7 @@
  */
 
 import { yieldToMain } from './progress'
+import { smartSoftEdge } from './smartEdge'
 
 async function blobToImageData(blob: Blob): Promise<ImageData> {
   const bmp = await createImageBitmap(blob)
@@ -106,13 +107,14 @@ async function refineAlphaFast(
     return out
   }
 
+  // Wider soft ramp — keeps hair / smoke partial alpha
   await mapRows(h, 96, (y0, y1) => {
     for (let y = y0; y < y1; y++) {
       for (let x = 0; x < w; x++) {
         const i = y * w + x
-        const s = smoothstep(0.08, 0.9, src[i * 4 + 3] / 255)
+        const s = smoothstep(0.05, 0.92, src[i * 4 + 3] / 255)
         const v = Math.round(s * 255)
-        a0[i] = v < 12 ? 0 : v > 248 ? 255 : v
+        a0[i] = v < 8 ? 0 : v > 250 ? 255 : v
       }
     }
   })
@@ -225,6 +227,20 @@ export async function refineCutout(
 
   let alpha = await refineAlphaFast(cut, sw, sh, mode)
   await yieldToMain()
+
+  // Smart soft edge at inference res (before upscale) — better hair/detail
+  if (mode === 'soft') {
+    let rgbInf: Uint8ClampedArray = cut
+    if (options.exportSource) {
+      try {
+        rgbInf = await loadRgb(options.exportSource, sw, sh)
+      } catch {
+        rgbInf = cut
+      }
+    }
+    alpha = await smartSoftEdge(alpha, rgbInf, sw, sh)
+    await yieldToMain()
+  }
 
   let kept = 0
   for (let i = 0; i < n; i++) {

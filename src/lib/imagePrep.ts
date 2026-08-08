@@ -1,47 +1,49 @@
+import { getDeviceProfile, scaleEdge } from './deviceProfile'
 import { QUALITY_PRESETS, type QualityMode } from '../types'
 
 export interface PreparedImage {
-  /** Downscaled blob for AI inference */
   inference: Blob
-  /** Source for full-res composite (original or export-capped) */
   exportSource: Blob
   exportWidth: number
   exportHeight: number
   inferenceWidth: number
   inferenceHeight: number
+  /** Effective caps after device adapt */
+  caps: { inference: number; export: number }
 }
 
 /**
  * Prepare inference-sized + export-sized images.
- * Inference is small/fast; export keeps near-original resolution for sharp PNG.
+ * Caps are quality preset × device profile (phones get smaller AI input).
  */
 export async function prepareForInference(
   file: File,
   quality: QualityMode = 'fast',
 ): Promise<PreparedImage> {
   const preset = QUALITY_PRESETS[quality]
+  const device = getDeviceProfile()
+  const maxInference = scaleEdge(preset.maxInferenceEdge, device.inferenceScale, 640, 2560)
+  const maxExport = scaleEdge(preset.maxExportEdge, device.exportScale, 1280, 4096)
+
   const bitmap = await createImageBitmap(file)
   try {
     const { width, height } = bitmap
     const edge = Math.max(width, height)
 
-    // Export size (cap huge photos to avoid OOM)
     let exportW = width
     let exportH = height
     let exportSource: Blob = file
-    if (edge > preset.maxExportEdge) {
-      const scale = preset.maxExportEdge / edge
+    if (edge > maxExport) {
+      const scale = maxExport / edge
       exportW = Math.max(1, Math.round(width * scale))
       exportH = Math.max(1, Math.round(height * scale))
       exportSource = await bitmapToJpeg(bitmap, exportW, exportH, 0.95)
     }
 
-    // Inference size
     const infEdge = Math.max(exportW, exportH)
-    if (infEdge <= preset.maxInferenceEdge) {
-      // Small enough: same blob for both (exportSource may still be original file)
+    if (infEdge <= maxInference) {
       const inference =
-        exportSource === file && edge <= preset.maxInferenceEdge
+        exportSource === file && edge <= maxInference
           ? file
           : await bitmapToJpeg(bitmap, exportW, exportH, 0.92)
       return {
@@ -51,10 +53,11 @@ export async function prepareForInference(
         exportHeight: exportH,
         inferenceWidth: exportW,
         inferenceHeight: exportH,
+        caps: { inference: maxInference, export: maxExport },
       }
     }
 
-    const scale = preset.maxInferenceEdge / infEdge
+    const scale = maxInference / infEdge
     const infW = Math.max(1, Math.round(exportW * scale))
     const infH = Math.max(1, Math.round(exportH * scale))
     const inference = await bitmapToJpeg(bitmap, infW, infH, 0.92)
@@ -66,6 +69,7 @@ export async function prepareForInference(
       exportHeight: exportH,
       inferenceWidth: infW,
       inferenceHeight: infH,
+      caps: { inference: maxInference, export: maxExport },
     }
   } finally {
     bitmap.close()
@@ -81,7 +85,6 @@ async function bitmapToJpeg(
   let draw: ImageBitmap = source
   let extra: ImageBitmap | null = null
   try {
-    // Native resize when possible
     extra = await createImageBitmap(source, {
       resizeWidth: w,
       resizeHeight: h,

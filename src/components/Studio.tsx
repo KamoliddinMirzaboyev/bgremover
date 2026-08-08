@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { Download, RotateCcw, ZoomIn, ZoomOut } from 'lucide-react'
 import { ComparisonSlider } from './ComparisonSlider'
 import { BackgroundToolbar } from './BackgroundToolbar'
 import { downloadComposed } from '../lib/canvas'
+import { featherCutout, featherLabel } from '../lib/alphaFeather'
 import { QUALITY_PRESETS, type BackgroundState, type QualityMode } from '../types'
 
 interface Props {
@@ -33,6 +34,12 @@ export function Studio({
   })
   const [zoom, setZoom] = useState(1)
   const [downloading, setDownloading] = useState(false)
+  /** 0 = crisp, 100 = softest edge */
+  const [feather, setFeather] = useState(22)
+  const [featheredUrl, setFeatheredUrl] = useState(resultUrl)
+  const [featherBusy, setFeatherBusy] = useState(false)
+  const featherBlobRef = useRef<string | null>(null)
+  const featherGen = useRef(0)
 
   // Revoke custom bg blob on unmount / replace
   useEffect(() => {
@@ -42,6 +49,52 @@ export function Studio({
       }
     }
   }, [background.imageUrl])
+
+  // Debounced feather preview from base result
+  useEffect(() => {
+    const gen = ++featherGen.current
+    let cancelled = false
+
+    const run = async () => {
+      if (feather < 1) {
+        if (featherBlobRef.current) {
+          URL.revokeObjectURL(featherBlobRef.current)
+          featherBlobRef.current = null
+        }
+        setFeatheredUrl(resultUrl)
+        setFeatherBusy(false)
+        return
+      }
+
+      setFeatherBusy(true)
+      try {
+        const res = await fetch(resultUrl)
+        const base = await res.blob()
+        const out = await featherCutout(base, feather)
+        if (cancelled || gen !== featherGen.current) return
+        if (featherBlobRef.current) URL.revokeObjectURL(featherBlobRef.current)
+        const url = URL.createObjectURL(out)
+        featherBlobRef.current = url
+        setFeatheredUrl(url)
+      } catch {
+        if (!cancelled) setFeatheredUrl(resultUrl)
+      } finally {
+        if (!cancelled && gen === featherGen.current) setFeatherBusy(false)
+      }
+    }
+
+    const t = window.setTimeout(() => void run(), 180)
+    return () => {
+      cancelled = true
+      window.clearTimeout(t)
+    }
+  }, [resultUrl, feather])
+
+  useEffect(() => {
+    return () => {
+      if (featherBlobRef.current) URL.revokeObjectURL(featherBlobRef.current)
+    }
+  }, [])
 
   const previewStyle = useMemo((): CSSProperties => {
     if (background.mode === 'color') {
@@ -63,7 +116,7 @@ export function Studio({
   const handleDownload = async () => {
     setDownloading(true)
     try {
-      await downloadComposed(resultUrl, background, `${fileName}-no-bg`)
+      await downloadComposed(featheredUrl, background, `${fileName}-no-bg`)
     } catch {
       onError('Yuklab olish amalga oshmadi. Qayta urinib ko‘ring.')
     } finally {
@@ -85,9 +138,10 @@ export function Studio({
             </span>
             {width > 0 && height > 0 && (
               <span className="tabular-nums">
-                {width}×{height} px · full-res export
+                {width}×{height} px · full-res
               </span>
             )}
+            {featherBusy && <span className="text-zinc-600">Chet yangilanmoqda…</span>}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -120,7 +174,7 @@ export function Studio({
           <div className={`${containerClass} rounded-xl`}>
             <ComparisonSlider
               originalUrl={originalUrl}
-              resultUrl={resultUrl}
+              resultUrl={featheredUrl}
               backgroundStyle={previewStyle}
               zoom={zoom}
               transparent={background.mode === 'transparent'}
@@ -161,8 +215,30 @@ export function Studio({
           <BackgroundToolbar background={background} onChange={setBackground} />
 
           <div className="mt-6 border-t border-zinc-800 pt-4">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="text-xs font-medium text-zinc-300">Chet yumshoqligi</p>
+              <span className="text-[11px] tabular-nums text-zinc-500">
+                {featherLabel(feather)} · {feather}
+              </span>
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={1}
+              value={feather}
+              onChange={(e) => setFeather(Number(e.target.value))}
+              className="w-full"
+              aria-label="Chet yumshoqligi"
+            />
+            <p className="mt-2 text-[11px] leading-relaxed text-zinc-600">
+              0 = o‘tkir (logo/QR). 40–70 = odam/soch. Yuklab olish shu sozlamani ishlatadi.
+            </p>
+          </div>
+
+          <div className="mt-4 border-t border-zinc-800 pt-4">
             <p className="text-xs leading-relaxed text-zinc-500">
-              Shaffof fon — PNG. Rang yoki rasm fon — JPEG (asl o‘lcham saqlanadi).
+              Shaffof fon — PNG. Rang yoki rasm fon — JPEG. Full-res export.
             </p>
           </div>
         </aside>
